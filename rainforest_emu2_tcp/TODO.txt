@@ -1,0 +1,3 @@
+Notify home assistant of update - self.async_schedule_update_ha_state()
+	Have hub Get callback routine form sensors as they are created - like solar edge
+	have the callback routine trigger self.async_schedule_update_ha_state()

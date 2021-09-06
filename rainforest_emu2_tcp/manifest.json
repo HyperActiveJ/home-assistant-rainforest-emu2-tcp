@@ -1,0 +1,10 @@
+{
+  "domain": "rainforest_emu2_tcp",
+  "name": "Rainforest EMU2 TCP",
+  "documentation": "TBD",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": ["TBD"],
+  "config_flow": true,
+  "version": "1.3.0"
+}

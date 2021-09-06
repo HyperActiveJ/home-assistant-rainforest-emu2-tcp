@@ -1,0 +1,21 @@
+{
+  "config": {
+    "title": "Rainforest EMU2 TCP",
+    "step": {
+      "user": {
+        "title": "Define your Rainforest EMU2 TCP connection",
+        "data": {
+          "host": "The ip-address of your Rainforest EMU2 usb>TCP server",
+          "name": "The prefix to be used for your Rainforest EMU2 sensors",
+          "port": "The TCP port on which to connect to the Rainforest EMU2 usb>TCP server"
+        }
+      }
+    },
+    "error": {
+      "already_configured": "Device is already configured"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  }
+}
