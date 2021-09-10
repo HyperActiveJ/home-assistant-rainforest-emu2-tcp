@@ -13,6 +13,7 @@ from homeassistant.const import CONF_NAME, CONF_HOST, CONF_PORT, CONF_SCAN_INTER
 from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_interval
+import sys, os
 from .const import (
     DOMAIN,
     DEFAULT_NAME,
@@ -105,6 +106,7 @@ class EMU2TCPHub:
         self._reader = None
         self._serial_thread_isEnabled = True
         self._serial_thread = Thread(target = self.tcp_read, args = (host, port))
+        self._serial_thread.name = "EMU2 TCP Reader Thread"
         self._serial_thread.start()
     
     @callback
@@ -145,12 +147,14 @@ class EMU2TCPHub:
         
     def connectx(self, hostINx, portINx):
         _LOGGER.debug("Connecting")    
+        if self._reader != None:
+            self._reader.close()
         self._reader = None
         while self._reader == None:
             try:
                 result = socket.gethostbyname(hostINx)
                 _LOGGER.debug("Attempting to connect %s %s", hostINx, result)
-                self._reader = socket.create_connection((result, portINx), 15.0)
+                self._reader = socket.create_connection((result, portINx), 20.0)
             except socket.error as msg:
                 self._reader = None
                 _LOGGER.error("Failed to open %s %s. Retrying in 5s... %s", hostINx, portINx, msg)
@@ -164,93 +168,147 @@ class EMU2TCPHub:
         msgStr = ""        
         while self._serial_thread_isEnabled:
             try:
+                #_LOGGER.debug("presleep ")
                 time.sleep(0.01)
-                _LOGGER.debug("Pre RX msgStr %s", msgStr)
+                #_LOGGER.debug("Pre RX")
                 self.state = "Recv"
                 recv = self._reader.recv(16384).decode()
                 if  (recv == None) or (recv == []): 
                     _LOGGER.warning(" Recv Failed or timed out")
                     self.connectx(hostIN, portIN) 
                     continue
-                _LOGGER.debug(" recv %s ", recv)
+                #_LOGGER.debug(" recv %s ", recv)
                 msgStr = msgStr + recv
                 #_LOGGER.debug(" msgStr %s ", msgStr)
-                if  len(msgStr) < len("<CurrentSummationDelivered>"): 
-                    continue
-                while not (
-                    msgStr.startswith("<InstantaneousDemand>")  
-                    or msgStr.startswith("<PriceCluster>")  
-                    or msgStr.startswith("<CurrentSummationDelivered>")  
-                    ):
-                    #_LOGGER.debug("Trim msgStr %s ", msgStr)
-                    msgStr = msgStr[1:]
-                    #_LOGGER.debug("1Trim msgStr %s ", msgStr)
-                    if  msgStr == []: 
-                        continue
-                if (
-                    ("</InstantaneousDemand>" in msgStr)
-                    or ("</PriceCluster>" in msgStr)  
-                    or ("</CurrentSummationDelivered>" in msgStr) 
-                    ):
-                    if not (
-                        msgStr.startswith("<InstantaneousDemand>")  
-                        or msgStr.startswith("<PriceCluster>")  
-                        or msgStr.startswith("<CurrentSummationDelivered>")  
-                        ):
-                        msgStr = ""
-                        continue
-                    #_LOGGER.debug("Res msgStr %s ", msgStr)
-                    try:
-                        xmlTree = xmlDecoder.fromstring(msgStr)
-                        msgStr = ""
-                    except Exception as e:
-                        _LOGGER.warning("xmlDecoder Exception %s", e)
-                        msgStr = ""
-                        continue
-                    #_LOGGER.debug("xmlTree Tag %s", xmlTree.tag )
-                    if xmlTree.tag == 'InstantaneousDemand':
-                        demand = int(xmlTree.find('Demand').text, 16)
-                        demand = -(demand & 0x80000000) | (demand & 0x7fffffff)
-                        multiplier = int(xmlTree.find('Multiplier').text, 16)
-                        divisor = int(xmlTree.find('Divisor').text, 16)
-                        digitsRight = int(xmlTree.find('DigitsRight').text, 16)
-                        if(divisor != 0):
-                            self.InstantaneousDemand = round(((demand * multiplier) / divisor), digitsRight)
-                            _LOGGER.debug("InstantaneousDemand: %s", self.InstantaneousDemand)
-                            for sensor in self._sensors:
-                                if (sensor.entity_description.key == "EMU2:InstantaneousDemand"):
-                                    sensor._data_updated()
-                            #self.async_schedule_update_ha_state()  
-                        else: 
-                            _LOGGER.warning("divisor ==0")  
-                        #self._data[ATTR_DEVICE_MAC_ID] = xmlTree.find('DeviceMacId').text
-                        #self._data[ATTR_METER_MAC_ID] = xmlTree.find('MeterMacId').text               
-                    elif xmlTree.tag == 'PriceCluster':
-                        #priceRaw = int(xmlTree.find('Price').text, 16)
-                        #trailingDigits = int(xmlTree.find('TrailingDigits').text, 16)
-                        #self._data[ATTR_PRICE] = priceRaw / pow(10, trailingDigits)
-                        #self._data[ATTR_TIER] = int(xmlTree.find('Tier').text, 16)                          
-                        _LOGGER.error("PriceCluster Found but not Used")
-                    elif xmlTree.tag == 'CurrentSummationDelivered':
-                        delivered = int(xmlTree.find('SummationDelivered').text, 16)
-                        delivered *= int(xmlTree.find('Multiplier').text, 16)
-                        delivered /= int(xmlTree.find('Divisor').text, 16)
-                        self.CurrentSummationDelivered = delivered
-                        _LOGGER.debug("_CurrentSummationDelivered: %s", self.CurrentSummationDelivered)   
-                        received = int(xmlTree.find('SummationReceived').text, 16)
-                        received *= int(xmlTree.find('Multiplier').text, 16)
-                        received /= int(xmlTree.find('Divisor').text, 16)
-                        self.CurrentSummationReceived = received
-                        _LOGGER.debug("_CurrentSummationReceived: %s", self.CurrentSummationReceived)
-                        for sensor in self._sensors:
-                            if (sensor.entity_description.key == "EMU2:CurrentSummationDelivered"):
-                                sensor._data_updated()
-                            if (sensor.entity_description.key == "EMU2:CurrentSummationReceived"):
-                                sensor._data_updated()
+                #Decide if we have enough to start processing
+                msgtype = 0
+                start = -1
+                secondStart = 999999
+                test = msgStr.find("<InstantaneousDemand>")
+                if (test >=0):
+                    start = test
+                    msgtype = 1
+                test = msgStr.find("<CurrentSummationDelivered>")
+                if (test >=0):
+                    if (msgtype > 0) and (test < start):
+                        #Message type 2  found before type 1
+                        secondStart = start
+                        start = test
+                        msgtype = 2
+                    elif (msgtype > 0):
+                        #message type 2 found after message type 1
+                        secondStart = test
                     else:
-                        _LOGGER.warning("Unable to Decode Msg")
+                        #no message type 1 found
+                        start = test
+                        msgtype = 2
+                test = msgStr.find("<PriceCluster>")
+                if (test >=0) and (msgtype > 0) and (test < start):
+                    if (msgtype > 0) and (test < start):
+                        #Message type 3 also found before type 2 or 1
+                        secondStart = start
+                        start = test
+                        msgtype = 3
+                    elif (msgtype > 0):
+                        #message type 2 found after message type 1
+                        if (secondStart > test):
+                            secondStart = test
+                    else:
+                        #no message type 2 or 1 found, but found type 3
+                        start = test
+                        msgtype = 3                
+                if msgtype == 0:
+                    #No start of message received yet, keep getting data
+                    continue
+                #found a message start, trim to first found valid tag start
+                msgStr = msgStr[start:]
+                secondStart = secondStart - start
+                #find the end of the message
+                end = 999999
+                msgtyperx = 0
+                test = msgStr.find("</InstantaneousDemand>")
+                if test >= 0 and test < end:
+                    msgtyperx = 1
+                    end = test
+                test = msgStr.find("</CurrentSummationDelivered>")
+                if test >= 0 and test < end:
+                    msgtyperx = 2
+                    end = test
+                test = msgStr.find("</PriceCluster>")
+                if test >= 0 and test < end:
+                    msgtyperx = 3
+                    end = test
+                #check if we have an end
+                if msgtyperx == 0:
+                    # have not received end yet
+                    continue
+                #check if the end does not match the begining
+                if (msgtyperx != msgtype):
+                    _LOGGER.warning("partial message dropped %s", msgStr[:secondStart])
+                    msgStr = msgStr[secondStart:]
+                    continue
+                #grab the message to be decoded
+                if msgtype == 1:
+                    end += len("</InstantaneousDemand>")
+                elif msgtype == 2:
+                    end += len("</CurrentSummationDelivered>")
+                elif msgtype == 3:
+                    end += len("</PriceCluster>")
+                procMsg = msgStr[start:end]
+                #save the rest for next loop
+                msgStr = msgStr[end:]
+                #go ahead and try and decode the message
+                try:
+                    xmlTree = xmlDecoder.fromstring(procMsg)
+                except Exception as e:
+                    _LOGGER.warning("xmlDecoder Exception %s", e)
+                    continue
+                #_LOGGER.debug("xmlTree Tag %s", xmlTree.tag )
+                if xmlTree.tag == 'InstantaneousDemand':
+                    demand = int(xmlTree.find('Demand').text, 16)
+                    demand = -(demand & 0x80000000) | (demand & 0x7fffffff)
+                    multiplier = int(xmlTree.find('Multiplier').text, 16)
+                    divisor = int(xmlTree.find('Divisor').text, 16)
+                    digitsRight = int(xmlTree.find('DigitsRight').text, 16)
+                    if(divisor != 0):
+                        self.InstantaneousDemand = round(((demand * multiplier) / divisor), digitsRight)
+                        _LOGGER.debug("InstantaneousDemand: %s", self.InstantaneousDemand)
+                        for sensor in self._sensors:
+                            if (sensor.entity_description.key == "EMU2:InstantaneousDemand"):
+                                sensor._data_updated()
+                        #self.async_schedule_update_ha_state()  
+                    else: 
+                        _LOGGER.warning("divisor ==0")  
+                    #self._data[ATTR_DEVICE_MAC_ID] = xmlTree.find('DeviceMacId').text
+                    #self._data[ATTR_METER_MAC_ID] = xmlTree.find('MeterMacId').text               
+                elif xmlTree.tag == 'PriceCluster':
+                    #priceRaw = int(xmlTree.find('Price').text, 16)
+                    #trailingDigits = int(xmlTree.find('TrailingDigits').text, 16)
+                    #self._data[ATTR_PRICE] = priceRaw / pow(10, trailingDigits)
+                    #self._data[ATTR_TIER] = int(xmlTree.find('Tier').text, 16)                          
+                    _LOGGER.error("PriceCluster Found but not Used")
+                elif xmlTree.tag == 'CurrentSummationDelivered':
+                    delivered = int(xmlTree.find('SummationDelivered').text, 16)
+                    delivered *= int(xmlTree.find('Multiplier').text, 16)
+                    delivered /= int(xmlTree.find('Divisor').text, 16)
+                    self.CurrentSummationDelivered = delivered
+                    _LOGGER.debug("_CurrentSummationDelivered: %s", self.CurrentSummationDelivered)   
+                    received = int(xmlTree.find('SummationReceived').text, 16)
+                    received *= int(xmlTree.find('Multiplier').text, 16)
+                    received /= int(xmlTree.find('Divisor').text, 16)
+                    self.CurrentSummationReceived = received
+                    _LOGGER.debug("_CurrentSummationReceived: %s", self.CurrentSummationReceived)
+                    for sensor in self._sensors:
+                        if (sensor.entity_description.key == "EMU2:CurrentSummationDelivered"):
+                            sensor._data_updated()
+                        if (sensor.entity_description.key == "EMU2:CurrentSummationReceived"):
+                            sensor._data_updated()
+                else:
+                    _LOGGER.warning("Unable to Decode Msg")
             except Exception as e:
-                _LOGGER.error("191 Exception %s ", e)
+                exc_type, exc_obj, exc_tb = sys.exc_info()
+                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                _LOGGER.error("191 Exception %s  %s %s %s", e, exc_type, fname, exc_tb.tb_lineno)
                 self.connectx(hostIN, portIN)
         _LOGGER.error("Closing ")
         self._reader.close()
