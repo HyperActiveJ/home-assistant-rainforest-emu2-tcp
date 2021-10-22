@@ -158,7 +158,8 @@ class EMU2TCPHub:
             except socket.error as msg:
                 self._reader = None
                 _LOGGER.error("Failed to open %s %s. Retrying in 5s... %s", hostINx, portINx, msg)
-                time.sleep(5.0)
+                time.sleep(30.0)
+        self.firstrun = False
         _LOGGER.debug("Begining Loop")
         
     def tcp_read(self, hostIN, portIN):
@@ -244,7 +245,9 @@ class EMU2TCPHub:
                     continue
                 #check if the end does not match the begining
                 if (msgtyperx != msgtype):
-                    _LOGGER.warning("partial message dropped %s", msgStr[:secondStart])
+                    if self.firstrun:
+                        _LOGGER.warning("partial message dropped %s", msgStr[:secondStart])
+                    self.firstrun = True
                     msgStr = msgStr[secondStart:]
                     continue
                 #grab the message to be decoded
@@ -261,7 +264,9 @@ class EMU2TCPHub:
                 try:
                     xmlTree = xmlDecoder.fromstring(procMsg)
                 except Exception as e:
-                    _LOGGER.warning("xmlDecoder Exception %s", e)
+                    if self.firstrun:
+                        _LOGGER.warning("xmlDecoder Exception %s", e)
+                    self.firstrun = True
                     continue
                 #_LOGGER.debug("xmlTree Tag %s", xmlTree.tag )
                 if xmlTree.tag == 'InstantaneousDemand':
@@ -309,6 +314,7 @@ class EMU2TCPHub:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
                 _LOGGER.error("191 Exception %s  %s %s %s", e, exc_type, fname, exc_tb.tb_lineno)
+                time.sleep(30.0)
                 self.connectx(hostIN, portIN)
         _LOGGER.error("Closing ")
         self._reader.close()

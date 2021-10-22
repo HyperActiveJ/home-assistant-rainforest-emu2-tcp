@@ -91,7 +91,7 @@ class EMU2TCPSensor(SensorEntity):
 
 
     async def async_will_remove_from_hass(self) -> None:
-        self._hub.async_remove_solaredge_sensor(self)
+        self._hub.async_remove_emu2_sensor(self)
 
     @callback
     def _data_updated(self):
