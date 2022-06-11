@@ -1,7 +1,15 @@
+OBSOLETE - This functionality has been merged into 
+https://github.com/HyperActiveJ/hass-rainforest-emu-2
+and 
+https://github.com/ryanwinter/hass-rainforest-emu-2
+
+
+![Untitled](https://user-images.githubusercontent.com/6298301/132909545-06cd73ec-42cf-4233-b32f-67c6f57e10b2.png)
+
+DO NOT USE
 
 Overview
 
-![Untitled](https://user-images.githubusercontent.com/6298301/132909545-06cd73ec-42cf-4233-b32f-67c6f57e10b2.png)
 
 
 Installation
